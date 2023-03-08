@@ -1,0 +1,81 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: my-topic
+  labels:
+    strimzi.io/cluster: my-cluster
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: 7200000
+    segment.bytes: 107374182
+---
+
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: echo-sink
+  labels:
+    strimzi.io/cluster: my-cluster
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+    # ACLs to read the topic
+    - resource:
+        type: group
+        name: echo-sink
+      operations:
+       - Read
+    - resource:
+        type: topic
+        name: my-topic
+      operations:
+        - Describe
+        - Read
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: echo-sink-role
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["echo-sink"]
+    verbs: ["get"]
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: echo-sink-role-binding
+subjects:
+  - kind: ServiceAccount
+    name: my-connect-connect
+    namespace: myproject
+roleRef:
+  kind: Role
+  name: echo-sink-role
+  apiGroup: rbac.authorization.k8s.io
+---
+
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnector
+metadata:
+  name: echo-sink
+  labels:
+    strimzi.io/cluster: my-connect
+spec:
+  class: EchoSink
+  tasksMax: 1
+  config:
+    # Consumer overrides
+    consumer.override.sasl.jaas.config: ${secrets:myproject/echo-sink:sasl.jaas.config}
+    consumer.override.group.id: echo-sink
+    # Regular connector configuration
+    level: INFO
+    topics: my-topic

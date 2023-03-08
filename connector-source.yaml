@@ -1,0 +1,89 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: my-topic
+  labels:
+    strimzi.io/cluster: my-cluster
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: 7200000
+    segment.bytes: 107374182
+---
+
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: echo-source
+  labels:
+    strimzi.io/cluster: my-cluster
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+    # ACLs to produce to the topic
+    - resource:
+        type: topic
+        name: my-topic
+      operations:
+        - Describe
+        - Write
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: echo-source-role
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["echo-source"]
+    verbs: ["get"]
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: echo-source-role-binding
+subjects:
+  - kind: ServiceAccount
+    name: my-connect-connect
+    namespace: myproject
+roleRef:
+  kind: Role
+  name: echo-source-role
+  apiGroup: rbac.authorization.k8s.io
+---
+
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnector
+metadata:
+  name: echo-source
+  labels:
+    strimzi.io/cluster: my-connect
+spec:
+  class: CamelTimerSourceConnector
+  tasksMax: 1
+  config:
+    # Producer overrides
+    producer.override.sasl.jaas.config: ${secrets:myproject/echo-source:sasl.jaas.config}
+    # Regular connector configuration
+    topics: my-topic
+    camel.source.path.timerName: timer
+    key.converter: org.apache.kafka.connect.storage.StringConverter
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter.schemas.enable: false
+    # Replaces the with Hello World ;-)
+    transforms: HoistField,InsertField,ReplaceField
+    transforms.HoistField.type: org.apache.kafka.connect.transforms.HoistField$Value
+    transforms.HoistField.field: originalValue
+    transforms.InsertField.type: org.apache.kafka.connect.transforms.InsertField$Value
+    transforms.InsertField.timestamp.field: timestamp
+    transforms.InsertField.static.field: message
+    transforms.InsertField.static.value: Hello World
+    transforms.ReplaceField.type: org.apache.kafka.connect.transforms.ReplaceField$Value
+    transforms.ReplaceField.blacklist: originalValue
+
